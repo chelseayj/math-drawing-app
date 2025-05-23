@@ -1,24 +1,28 @@
-import React from 'react';
-import logo from './logo.svg';
+import React, { useState, useRef } from 'react';
 import './App.css';
+import Canvas, { CanvasRef } from './components/Canvas';
+import ShapeMenu from './components/ShapeMenu';
 
 function App() {
+  const [selectedShape, setSelectedShape] = useState<'circle' | 'triangle' | 'rectangle' | null>(null);
+  const [selectedTool, setSelectedTool] = useState<'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform'>('shape');
+  const canvasRef = useRef<CanvasRef>(null);
+
   return (
     <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+      <Canvas 
+        selectedShape={selectedShape} 
+        selectedTool={selectedTool}
+        ref={canvasRef}
+      />
+      <ShapeMenu
+        onSelectShape={setSelectedShape}
+        onSelectTool={setSelectedTool}
+        selectedShape={selectedShape}
+        selectedTool={selectedTool}
+        onClearShapes={() => canvasRef.current?.clearAllShapes()}
+        onUndo={() => canvasRef.current?.undo()}
+      />
     </div>
   );
 }
