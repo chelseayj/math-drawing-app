@@ -23,6 +23,7 @@ interface Angle {
   lines: [LineSegment, LineSegment];
   value: number;
   vertex: Point;
+  showLabel?: boolean; // 각도 레이블 표시 여부
 }
 
 interface Shape {
@@ -41,7 +42,7 @@ interface Shape {
 
 interface CanvasProps {
   selectedShape: 'circle' | 'triangle' | 'rectangle' | null;
-  selectedTool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform';
+  selectedTool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform' | 'perpendicular';
   onClearShapes?: () => void;
 }
 
@@ -96,37 +97,6 @@ interface ClosestLine {
   shapeIndex: number;
   distance: number;
 }
-
-// 점과 선분 사이의 거리를 계산하는 함수 아래에 추가
-const isPointNearTriangleEdge = (
-  mouseX: number,
-  mouseY: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number
-): boolean => {
-  const distance = pointToLineDistance(mouseX, mouseY, x1, y1, x2, y2);
-  return distance < 10;
-};
-
-const getTriangleEdgePoint = (
-  mouseX: number,
-  mouseY: number,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number
-): { x: number; y: number } => {
-  const A = x2 - x1;
-  const B = y2 - y1;
-  const C = A * A + B * B;
-  const t = Math.max(0, Math.min(1, ((mouseX - x1) * A + (mouseY - y1) * B) / C));
-  return {
-    x: x1 + t * A,
-    y: y1 + t * B
-  };
-};
 
 // 선분과 선분 사이의 각도를 계산하는 함수
 const calculateAngleBetweenLines = (
@@ -274,6 +244,52 @@ interface SelectedLineInfo {
   shapeIndex: number;
 }
 
+// 수선의 발 함수: 점에서 선분에 내린 수직점의 좌표를 계산
+const calculatePerpendicularFoot = (
+  point: { x: number; y: number },
+  lineStart: { x: number; y: number },
+  lineEnd: { x: number; y: number }
+): { x: number; y: number } => {
+  // 선분의 벡터
+  const lineVector = {
+    x: lineEnd.x - lineStart.x,
+    y: lineEnd.y - lineStart.y
+  };
+  
+  // 선분의 길이 제곱
+  const lineLengthSq = lineVector.x * lineVector.x + lineVector.y * lineVector.y;
+  
+  if (lineLengthSq === 0) {
+    // 선분이 점인 경우(시작점과 끝점이 같은 경우) 시작점 반환
+    return { x: lineStart.x, y: lineStart.y };
+  }
+  
+  // 점 p에서 선분의 시작점까지의 벡터
+  const pointVector = {
+    x: point.x - lineStart.x,
+    y: point.y - lineStart.y
+  };
+  
+  // 점 p의 벡터와 선분 벡터의 내적을 이용하여 수선의 발 t값 계산
+  const t = (pointVector.x * lineVector.x + pointVector.y * lineVector.y) / lineLengthSq;
+  
+  // t가 0보다 작으면 시작점이 가장 가까운 점
+  if (t < 0) {
+    return { x: lineStart.x, y: lineStart.y };
+  }
+  
+  // t가 1보다 크면 끝점이 가장 가까운 점
+  if (t > 1) {
+    return { x: lineEnd.x, y: lineEnd.y };
+  }
+  
+  // 선분 위의 점 계산
+  return {
+    x: lineStart.x + t * lineVector.x,
+    y: lineStart.y + t * lineVector.y
+  };
+};
+
 const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool, onClearShapes }, ref) => {
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -288,16 +304,21 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
   const [selectedLine, setSelectedLine] = useState<{ line: LineSegment; shapeIndex: number } | null>(null);
   const [firstSelectedLine, setFirstSelectedLine] = useState<SelectedLineInfo | null>(null);
   const [secondSelectedLine, setSecondSelectedLine] = useState<SelectedLineInfo | null>(null);
-  const [showAngleDialog, setShowAngleDialog] = useState(false);
-  const [selectedAngle, setSelectedAngle] = useState<{ angle: Angle; shapeIndex: number } | null>(null);
   // 삼각형 꼭짓점 변형을 위한 상태 추가
   const [transformingVertex, setTransformingVertex] = useState<{point: Point; shapeIndex: number; vertexIndex: number} | null>(null);
   const [hoveredVertex, setHoveredVertex] = useState<{point: Point; shapeIndex: number; vertexIndex: number} | null>(null);
+  // 실시간 각도 표시를 위한 상태 추가
+  const [realtimeAngles, setRealtimeAngles] = useState<{angles: Angle[]; shapeIndex: number} | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   
   // 작업 이력 저장
   const [history, setHistory] = useState<Shape[][]>([]);
   const [currentHistoryIndex, setCurrentHistoryIndex] = useState(-1);
+  // 수선의 발을 위한 상태 변수 수정
+  const [perpendicularPoint, setPerpendicularPoint] = useState<Point | null>(null);
+  // 수선의 발 생성 단계 추적 (0: 시작, 1: 점 선택됨, 2: 첫 번째 선분 선택됨)
+  const [perpendicularStep, setPerpendicularStep] = useState<number>(0);
+  const [tempPointPosition, setTempPointPosition] = useState<{x: number, y: number} | null>(null);
 
   // 초기 빈 배열 상태를 히스토리에 저장
   useEffect(() => {
@@ -360,6 +381,19 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
     } else if (selectedTool === 'transform' && hoveredVertex) {
       // 꼭짓점을 선택하여 변형 시작
       setTransformingVertex(hoveredVertex);
+      
+      // 이미 계산된 각도가 있다면 실시간 각도 상태 설정
+      const shape = shapes[hoveredVertex.shapeIndex];
+      if (shape.angles && shape.angles.length > 0) {
+        setRealtimeAngles({
+          angles: JSON.parse(JSON.stringify(shape.angles)), // 깊은 복사
+          shapeIndex: hoveredVertex.shapeIndex
+        });
+      }
+    } else if (selectedTool === 'perpendicular') {
+      // 수선의 발 도구를 위한 로직
+      console.log("handleMouseDown - 수선의 발 도구 클릭");
+      handlePerpendicularSelect(e);
     }
   };
 
@@ -455,6 +489,9 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
         // 삼각형 꼭짓점 호버링 처리
         handleVertexHover(e);
       }
+    } else if (selectedTool === 'perpendicular') {
+      // 수선의 발 도구 마우스 이동 처리
+      handlePerpendicularHover(e);
     }
   };
 
@@ -840,6 +877,8 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
     if (transformingVertex) {
       saveToHistory([...shapes]); // 변형 후 상태 저장
       setTransformingVertex(null);
+      // 실시간 각도 상태 초기화
+      setRealtimeAngles(null);
     }
     
     setIsDrawing(false);
@@ -1018,13 +1057,13 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
       else if (isSamePoint(line1.endPoint, line2.endPoint)) {
         vertex = line1.endPoint;
         foundCommonVertex = true;
-        // 방향 맞추기 위해 line2 재정렬 필요
+        // 방향을 맞추기 위해 line2의 시작점과 끝점을 바꿈
         line2.startPoint = [line2.endPoint, line2.endPoint = line2.startPoint][0];
       }
       else if (isSamePoint(line1.startPoint, line2.startPoint)) {
         vertex = line1.startPoint;
         foundCommonVertex = true;
-        // 방향 맞추기 위해 line1 재정렬 필요
+        // 방향을 맞추기 위해 line1의 시작점과 끝점을 바꿈
         line1.startPoint = [line1.endPoint, line1.endPoint = line1.startPoint][0];
       }
       else if (isSamePoint(line1.startPoint, line2.endPoint)) {
@@ -1276,7 +1315,7 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
         });
       }
 
-      // 각도가 있다면 꼭짓점과 선분 위치 업데이트
+      // 각도가 있다면 꼭짓점과 선분 위치 업데이트 및 각도 재계산
       if (shape.angles && shape.angles.length > 0) {
         shape.angles.forEach(angle => {
           // 각도의 꼭짓점 업데이트
@@ -1286,7 +1325,47 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
             angle.vertex.y = vertexPoint.y;
           }
 
-          // 각도를 형성하는 선분 업데이트 (이미 line을 통해 업데이트됨)
+          // 각도 값 재계산
+          const line1 = angle.lines[0];
+          const line2 = angle.lines[1];
+          
+          // 각도 재계산을 위해 시작점과 끝점이 모두 있어야 함
+          if (
+            line1 && line2 && 
+            line1.startPoint && line1.endPoint && 
+            line2.startPoint && line2.endPoint
+          ) {
+            const newAngleValue = calculateAngleBetweenLines(
+              line1.startPoint,
+              line1.endPoint,
+              line2.startPoint,
+              line2.endPoint
+            );
+            
+            if (newAngleValue !== -1) {
+              angle.value = newAngleValue;
+              
+              // 실시간 각도 상태 업데이트 (이미 설정된 경우에만)
+              if (realtimeAngles && realtimeAngles.shapeIndex === shapeIndex) {
+                const angleIndex = realtimeAngles.angles.findIndex(a => 
+                  a.vertex.label === angle.vertex.label &&
+                  a.lines[0].startPoint.label === angle.lines[0].startPoint.label &&
+                  a.lines[0].endPoint.label === angle.lines[0].endPoint.label &&
+                  a.lines[1].startPoint.label === angle.lines[1].startPoint.label &&
+                  a.lines[1].endPoint.label === angle.lines[1].endPoint.label
+                );
+                
+                if (angleIndex !== -1) {
+                  const updatedAngles = [...realtimeAngles.angles];
+                  updatedAngles[angleIndex] = JSON.parse(JSON.stringify(angle)); // 깊은 복사
+                  setRealtimeAngles({
+                    angles: updatedAngles,
+                    shapeIndex
+                  });
+                }
+              }
+            }
+          }
         });
       }
     }
@@ -1362,6 +1441,1115 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
     };
   };
 
+  // 수선의 발 선택 핸들러 수정 - 도형 테두리에서도 수선의 발 생성 가능하도록
+  const handlePerpendicularSelect = (e: React.MouseEvent) => {
+    if (!canvasRef.current) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // 단계 0: 점 선택 또는 생성 (기존 점 또는 선분/테두리 위의 새 점)
+    if (perpendicularStep === 0) {
+      // 먼저 기존 점을 찾아봄
+      let foundPoint = false;
+      
+      // 호버링된 점이 있으면 먼저 확인
+      if (hoveredPoint) {
+        setPerpendicularPoint(hoveredPoint);
+        setPerpendicularStep(1); // 점 선택 완료, 다음 단계로
+        return;
+      }
+      
+      // 호버링된 점이 없으면 클릭한 위치 근처의 점 확인
+      for (let i = 0; i < shapes.length; i++) {
+        const shape = shapes[i];
+        for (const point of shape.points) {
+          const distance = Math.sqrt(
+            Math.pow(mouseX - point.x, 2) + Math.pow(mouseY - point.y, 2)
+          );
+          
+          if (distance < 10) {
+            setPerpendicularPoint(point);
+            setPerpendicularStep(1); // 점 선택 완료, 다음 단계로
+            foundPoint = true;
+            setTempPointPosition(null);
+            break;
+          }
+        }
+        if (foundPoint) break;
+      }
+      
+      if (!foundPoint) {
+        setHoveredPoint(null);
+        
+        // 선분 위 호버링 확인
+        let closestLineInfo: { line: LineSegment; shapeIndex: number } | null = null;
+        let minDistance = Number.MAX_VALUE;
+        
+        for (let shapeIndex = 0; shapeIndex < shapes.length; shapeIndex++) {
+          const shape = shapes[shapeIndex];
+          
+          // 먼저 기존에 그려진 선분 확인
+          for (let lineIndex = 0; lineIndex < shape.lines.length; lineIndex++) {
+            const line = shape.lines[lineIndex];
+            const distance = pointToLineDistance(
+              mouseX, 
+              mouseY, 
+              line.startPoint.x, 
+              line.startPoint.y, 
+              line.endPoint.x, 
+              line.endPoint.y
+            );
+            
+            if (distance < minDistance && distance < 10) {
+              minDistance = distance;
+              closestLineInfo = {
+                line,
+                shapeIndex
+              };
+            }
+          }
+          
+          // 도형의 테두리(변) 확인
+          if (shape.type === 'triangle' || shape.type === 'rectangle') {
+            // 삼각형과 사각형의 변 계산
+            let vertices: { x: number; y: number }[] = [];
+            
+            if (shape.type === 'triangle') {
+              // 삼각형 꼭짓점 계산
+              if (shape.triangleVertices && shape.triangleVertices.length === 3) {
+                vertices = shape.triangleVertices;
+              } else {
+                // 기본 삼각형 꼭짓점
+                vertices = [
+                  { x: shape.x + shape.width/2, y: shape.y },              // 상단
+                  { x: shape.x, y: shape.y + shape.height },               // 좌측 하단
+                  { x: shape.x + shape.width, y: shape.y + shape.height }  // 우측 하단
+                ];
+              }
+            } else if (shape.type === 'rectangle') {
+              // 사각형 꼭짓점
+              vertices = [
+                { x: shape.x, y: shape.y },                          // 좌상단
+                { x: shape.x + shape.width, y: shape.y },            // 우상단
+                { x: shape.x + shape.width, y: shape.y + shape.height }, // 우하단
+                { x: shape.x, y: shape.y + shape.height }            // 좌하단
+              ];
+            }
+            
+            // 꼭짓점을 이용해 변(선분) 생성 및 거리 계산
+            for (let i = 0; i < vertices.length; i++) {
+              const startPoint = vertices[i];
+              const endPoint = vertices[(i + 1) % vertices.length]; // 마지막 점은 첫 번째 점과 연결
+              
+              const distance = pointToLineDistance(
+                mouseX,
+                mouseY,
+                startPoint.x,
+                startPoint.y,
+                endPoint.x,
+                endPoint.y
+              );
+              
+              if (distance < minDistance && distance < 10) {
+                minDistance = distance;
+                
+                // 임시 선분 객체 생성
+                const tempLine: LineSegment = {
+                  startPoint: { 
+                    x: startPoint.x, 
+                    y: startPoint.y,
+                    label: "", 
+                    type: 'edge' 
+                  },
+                  endPoint: { 
+                    x: endPoint.x, 
+                    y: endPoint.y,
+                    label: "", 
+                    type: 'edge' 
+                  }
+                };
+                
+                closestLineInfo = {
+                  line: tempLine,
+                  shapeIndex
+                };
+              }
+            }
+          } else if (shape.type === 'circle') {
+            // 원의 테두리 확인
+            const centerX = shape.center ? shape.center.x : shape.x + shape.width/2;
+            const centerY = shape.center ? shape.center.y : shape.y + shape.height/2;
+            const radius = shape.width / 2;
+            
+            // 중심에서 마우스까지의 거리
+            const distToCenter = Math.sqrt(
+              Math.pow(mouseX - centerX, 2) + Math.pow(mouseY - centerY, 2)
+            );
+            
+            // 원의 테두리와 마우스 사이의 거리
+            const distToEdge = Math.abs(distToCenter - radius);
+            
+            if (distToEdge < 10 && distToEdge < minDistance) {
+              minDistance = distToEdge;
+              
+              // 원 위의 점 계산 (마우스 방향으로 원 테두리 위의 점)
+              const angle = Math.atan2(mouseY - centerY, mouseX - centerX);
+              const edgeX = centerX + radius * Math.cos(angle);
+              const edgeY = centerY + radius * Math.sin(angle);
+              
+              // 원 테두리의 접선 계산 (반시계 방향으로 90도 회전)
+              const tangentEndX = edgeX - radius * Math.sin(angle);
+              const tangentEndY = edgeY + radius * Math.cos(angle);
+              
+              // 임시 선분 객체 생성 (원의 접선 - 수선 계산에 사용)
+              const tempLine: LineSegment = {
+                startPoint: { 
+                  x: edgeX, 
+                  y: edgeY,
+                  label: "", 
+                  type: 'edge' 
+                },
+                endPoint: { 
+                  x: tangentEndX, 
+                  y: tangentEndY,
+                  label: "", 
+                  type: 'edge' 
+                }
+              };
+              
+              closestLineInfo = {
+                line: tempLine,
+                shapeIndex
+              };
+              
+              // 원 테두리 위의 정확한 점 위치
+              setTempPointPosition({ x: edgeX, y: edgeY });
+              
+              // 이미 최적의 위치를 찾았으므로 다른 계산은 건너뜀
+              continue;
+            }
+          }
+        }
+        
+        if (closestLineInfo && tempPointPosition) {
+          // 여기서 새 점 생성하기
+          const updatedShapes = [...shapes];
+          const shape = updatedShapes[closestLineInfo.shapeIndex];
+          const label = String.fromCharCode(65 + shape.points.length); // A, B, C, ...
+          
+          // 새 점 생성
+          const newPoint: Point = {
+            x: tempPointPosition.x,
+            y: tempPointPosition.y,
+            label,
+            type: 'edge'
+          };
+          
+          // 점 추가
+          shape.points.push(newPoint);
+          
+          // 점을 수선의 발 첫 번째 점으로 설정
+          setPerpendicularPoint(newPoint);
+          setPerpendicularStep(1); // 다음 단계로
+          
+          // 상태 업데이트 및 히스토리 저장
+          setShapes(updatedShapes);
+          saveToHistory(updatedShapes);
+          
+          // 임시 상태 초기화
+          setHoveredLine(null);
+          setTempPointPosition(null);
+        }
+      }
+    } else if (perpendicularStep === 1 && perpendicularPoint) {
+      // 두 번째 단계: 선분 호버링 (도형 테두리 포함)
+      let closestLineInfo: { line: LineSegment; shapeIndex: number } | null = null;
+      let minDistance = Number.MAX_VALUE;
+      
+      for (let shapeIndex = 0; shapeIndex < shapes.length; shapeIndex++) {
+        const shape = shapes[shapeIndex];
+        
+        // 기존에 그려진 선분 확인
+        for (let lineIndex = 0; lineIndex < shape.lines.length; lineIndex++) {
+          const line = shape.lines[lineIndex];
+          
+          // 선택한 점이 이 선분 위에 있는지 확인
+          const isPointOnLine = (
+            (line.startPoint === perpendicularPoint) || 
+            (line.endPoint === perpendicularPoint) ||
+            pointToLineDistance(
+              perpendicularPoint.x,
+              perpendicularPoint.y,
+              line.startPoint.x,
+              line.startPoint.y,
+              line.endPoint.x,
+              line.endPoint.y
+            ) < 1 // 오차 허용
+          );
+          
+          // 점이 이미 선분 위에 있다면 이 선분은 건너뜀
+          if (isPointOnLine) continue;
+          
+          const distance = pointToLineDistance(
+            mouseX, 
+            mouseY, 
+            line.startPoint.x, 
+            line.startPoint.y, 
+            line.endPoint.x, 
+            line.endPoint.y
+          );
+          
+          if (distance < minDistance && distance < 10) {
+            minDistance = distance;
+            closestLineInfo = {
+              line,
+              shapeIndex
+            };
+            
+            // 수선의 발 계산 - 선택한 점에서 선분에 내린 수직점
+            const footPoint = calculatePerpendicularFoot(
+              perpendicularPoint,
+              line.startPoint,
+              line.endPoint
+            );
+            
+            // 수선의 발 위치 저장
+            setTempPointPosition(footPoint);
+          }
+        }
+        
+        // 도형의 테두리(변) 확인
+        if (shape.type === 'triangle' || shape.type === 'rectangle') {
+          // 삼각형과 사각형의 변 계산
+          let vertices: { x: number; y: number }[] = [];
+          
+          if (shape.type === 'triangle') {
+            // 삼각형 꼭짓점 계산
+            if (shape.triangleVertices && shape.triangleVertices.length === 3) {
+              vertices = shape.triangleVertices;
+            } else {
+              // 기본 삼각형 꼭짓점
+              vertices = [
+                { x: shape.x + shape.width/2, y: shape.y },              // 상단
+                { x: shape.x, y: shape.y + shape.height },               // 좌측 하단
+                { x: shape.x + shape.width, y: shape.y + shape.height }  // 우측 하단
+              ];
+            }
+          } else if (shape.type === 'rectangle') {
+            // 사각형 꼭짓점
+            vertices = [
+              { x: shape.x, y: shape.y },                          // 좌상단
+              { x: shape.x + shape.width, y: shape.y },            // 우상단
+              { x: shape.x + shape.width, y: shape.y + shape.height }, // 우하단
+              { x: shape.x, y: shape.y + shape.height }            // 좌하단
+            ];
+          }
+          
+          // 꼭짓점을 이용해 변(선분) 생성 및 거리 계산
+          for (let i = 0; i < vertices.length; i++) {
+            const startPoint = vertices[i];
+            const endPoint = vertices[(i + 1) % vertices.length]; // 마지막 점은 첫 번째 점과 연결
+            
+            // 선택한 점이 이 변(선분) 위에 있는지 확인
+            const isPointOnEdge = pointToLineDistance(
+              perpendicularPoint.x,
+              perpendicularPoint.y,
+              startPoint.x,
+              startPoint.y,
+              endPoint.x,
+              endPoint.y
+            ) < 1; // 오차 허용
+            
+            // 점이 이미 변 위에 있다면 이 변은 건너뜀
+            if (isPointOnEdge) continue;
+            
+            const distance = pointToLineDistance(
+              mouseX,
+              mouseY,
+              startPoint.x,
+              startPoint.y,
+              endPoint.x,
+              endPoint.y
+            );
+            
+            if (distance < minDistance && distance < 10) {
+              minDistance = distance;
+              
+              // 임시 선분 객체 생성
+              const tempLine: LineSegment = {
+                startPoint: { 
+                  x: startPoint.x, 
+                  y: startPoint.y,
+                  label: "", 
+                  type: 'edge' 
+                },
+                endPoint: { 
+                  x: endPoint.x, 
+                  y: endPoint.y,
+                  label: "", 
+                  type: 'edge' 
+                }
+              };
+              
+              closestLineInfo = {
+                line: tempLine,
+                shapeIndex
+              };
+              
+              // 수선의 발 계산 - 선택한 점에서 선분에 내린 수직점
+              const footPoint = calculatePerpendicularFoot(
+                perpendicularPoint,
+                { x: startPoint.x, y: startPoint.y },
+                { x: endPoint.x, y: endPoint.y }
+              );
+              
+              // 수선의 발 위치 저장
+              setTempPointPosition(footPoint);
+            }
+          }
+        } else if (shape.type === 'circle') {
+          // 원의 테두리 확인
+          const centerX = shape.center ? shape.center.x : shape.x + shape.width/2;
+          const centerY = shape.center ? shape.center.y : shape.y + shape.height/2;
+          const radius = shape.width / 2;
+          
+          // 선택한 점이 원 위에 있는지 확인
+          const distPointToCenter = Math.sqrt(
+            Math.pow(perpendicularPoint.x - centerX, 2) + 
+            Math.pow(perpendicularPoint.y - centerY, 2)
+          );
+          const isPointOnCircle = Math.abs(distPointToCenter - radius) < 1; // 오차 허용
+          
+          // 점이 이미 원 위에 있다면 건너뜀
+          if (isPointOnCircle) continue;
+          
+          // 중심에서 마우스까지의 거리
+          const distToCenter = Math.sqrt(
+            Math.pow(mouseX - centerX, 2) + Math.pow(mouseY - centerY, 2)
+          );
+          
+          // 원의 테두리와 마우스 사이의 거리
+          const distToEdge = Math.abs(distToCenter - radius);
+          
+          if (distToEdge < 10 && distToEdge < minDistance) {
+            minDistance = distToEdge;
+            
+            // 원 중심에서 선택한 점으로의 방향 벡터 계산
+            const dirX = perpendicularPoint.x - centerX;
+            const dirY = perpendicularPoint.y - centerY;
+            const dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
+            
+            // 방향 벡터를 정규화
+            const normalizedDirX = dirX / dirLength;
+            const normalizedDirY = dirY / dirLength;
+            
+            // 방향 벡터 방향으로 원 테두리 위 점 계산 (수선의 발)
+            const footPointX = centerX + normalizedDirX * radius;
+            const footPointY = centerY + normalizedDirY * radius;
+            
+            // 원 테두리에서의 접선 방향 (반시계 방향 90도 회전)
+            const tangentDx = -normalizedDirY;
+            const tangentDy = normalizedDirX;
+            
+            // 임시 선분 객체 생성 (원의 접선)
+            const tempLine: LineSegment = {
+              startPoint: { 
+                x: footPointX - tangentDx * radius, // 접선 시작점
+                y: footPointY - tangentDy * radius,
+                label: "", 
+                type: 'edge' 
+              },
+              endPoint: { 
+                x: footPointX + tangentDx * radius, // 접선 종점
+                y: footPointY + tangentDy * radius,
+                label: "", 
+                type: 'edge' 
+              }
+            };
+            
+            closestLineInfo = {
+              line: tempLine,
+              shapeIndex
+            };
+            
+            // 수선의 발 위치 저장 (원 테두리 위의 점)
+            setTempPointPosition({ x: footPointX, y: footPointY });
+          }
+        }
+      }
+      
+      if (closestLineInfo && tempPointPosition) {
+        // 수선의 발 선분 생성
+        const updatedShapes = [...shapes];
+        const shape = updatedShapes[closestLineInfo.shapeIndex];
+        
+        // 수선의 발 위치에 새 점 생성하지 않고 선만 추가
+        if (!shape.lines) {
+          shape.lines = [];
+        }
+        
+        // 수선의 발 선분 추가
+        shape.lines.push({
+          startPoint: perpendicularPoint,
+          endPoint: {
+            x: tempPointPosition.x,
+            y: tempPointPosition.y,
+            label: "",
+            type: 'edge' as 'center' | 'edge' | 'vertex'
+          }
+        });
+        
+        // 직각 각도 생성
+        const lineFromPoint = {
+          startPoint: perpendicularPoint,
+          endPoint: {
+            x: tempPointPosition.x,
+            y: tempPointPosition.y,
+            label: "",
+            type: 'edge' as 'center' | 'edge' | 'vertex'
+          }
+        };
+        
+        const lineToMakeAngle = closestLineInfo.line;
+        
+        // 직각 각도 객체 생성
+        const angle: Angle = {
+          lines: [lineFromPoint, lineToMakeAngle],
+          value: 90.0,
+          vertex: {
+            x: tempPointPosition.x,
+            y: tempPointPosition.y,
+            label: "",
+            type: 'edge' as 'center' | 'edge' | 'vertex'
+          },
+          showLabel: false // 직각 레이블은 표시하지 않음
+        };
+        
+        // 각도 추가
+        if (!shape.angles) {
+          shape.angles = [];
+        }
+        shape.angles.push(angle);
+        
+        // 상태 업데이트 및 히스토리 저장
+        setShapes(updatedShapes);
+        saveToHistory(updatedShapes);
+        
+        // 수선의 발 작업 완료, 상태 초기화
+        setPerpendicularPoint(null);
+        setPerpendicularStep(0);
+        setHoveredLine(null);
+        setTempPointPosition(null);
+      }
+    }
+  };
+  
+  // useEffect를 추가하여 도구 변경 시 상태 초기화
+  useEffect(() => {
+    if (selectedTool !== 'perpendicular') {
+      // 수선의 발 도구가 아닐 때 상태 초기화
+      setPerpendicularPoint(null);
+      setPerpendicularStep(0);
+      setTempPointPosition(null);
+    }
+  }, [selectedTool]);
+
+  // 수선의 발 호버 처리 함수
+  const handlePerpendicularHover = (e: React.MouseEvent) => {
+    if (!canvasRef.current) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // 단계에 따라 다른 호버링 처리
+    if (perpendicularStep === 0) {
+      // 첫 번째 단계: 점 또는 선분 호버링
+      
+      // 먼저 기존 점 호버링 확인
+      let foundPoint = false;
+      
+      for (const shape of shapes) {
+        for (const point of shape.points) {
+          const distance = Math.sqrt(
+            Math.pow(mouseX - point.x, 2) + Math.pow(mouseY - point.y, 2)
+          );
+          
+          if (distance < 10) {
+            setHoveredPoint(point);
+            document.body.style.cursor = 'pointer';
+            foundPoint = true;
+            setTempPointPosition(null);
+            break;
+          }
+        }
+        if (foundPoint) break;
+      }
+      
+      if (!foundPoint) {
+        setHoveredPoint(null);
+        
+        // 선분 호버링 검사 (유틸리티 함수 사용)
+        const { closestLineInfo, tempPosition } = findClosestLine(mouseX, mouseY);
+        
+        if (closestLineInfo) {
+          setHoveredLine(closestLineInfo);
+          document.body.style.cursor = 'crosshair';
+          setTempPointPosition(tempPosition);
+        } else {
+          setHoveredLine(null);
+          document.body.style.cursor = 'default';
+          setTempPointPosition(null);
+        }
+      }
+    } else if (perpendicularStep === 1 && perpendicularPoint) {
+      // 두 번째 단계: 선분 호버링 (도형 테두리 포함)
+      // 선택한 점에서 수선을 내릴 선분을 호버링
+      
+      // 기존 코드를 그대로 사용하지 않고, 직접 수선의 발 계산
+      let closestLineInfo: { line: LineSegment; shapeIndex: number } | null = null;
+      let minDistance = Number.MAX_VALUE;
+      let tempPosition: { x: number, y: number } | null = null;
+      
+      for (let shapeIndex = 0; shapeIndex < shapes.length; shapeIndex++) {
+        const shape = shapes[shapeIndex];
+        
+        // 기존에 그려진 선분 확인
+        for (let lineIndex = 0; lineIndex < shape.lines.length; lineIndex++) {
+          const line = shape.lines[lineIndex];
+          
+          // 선택한 점이 이 선분 위에 있는지 확인
+          const isPointOnLine = (
+            (line.startPoint === perpendicularPoint) || 
+            (line.endPoint === perpendicularPoint) ||
+            pointToLineDistance(
+              perpendicularPoint.x,
+              perpendicularPoint.y,
+              line.startPoint.x,
+              line.startPoint.y,
+              line.endPoint.x,
+              line.endPoint.y
+            ) < 1 // 오차 허용
+          );
+          
+          // 점이 이미 선분 위에 있다면 이 선분은 건너뜀
+          if (isPointOnLine) continue;
+          
+          const distance = pointToLineDistance(
+            mouseX, 
+            mouseY, 
+            line.startPoint.x, 
+            line.startPoint.y, 
+            line.endPoint.x, 
+            line.endPoint.y
+          );
+          
+          if (distance < minDistance && distance < 10) {
+            minDistance = distance;
+            
+            // 수선의 발 계산 - 선택한 점에서 선분에 내린 수직점
+            const footPoint = calculatePerpendicularFoot(
+              perpendicularPoint,
+              line.startPoint,
+              line.endPoint
+            );
+            
+            closestLineInfo = {
+              line,
+              shapeIndex
+            };
+            
+            tempPosition = footPoint;
+          }
+        }
+        
+        // 도형의 테두리(변) 확인
+        if (shape.type === 'triangle' || shape.type === 'rectangle') {
+          const edges = getShapeEdges(shape);
+          
+          for (const edge of edges) {
+            const startPoint = edge.start;
+            const endPoint = edge.end;
+            
+            // 선택한 점이 이 변 위에 있는지 확인
+            const isPointOnEdge = pointToLineDistance(
+              perpendicularPoint.x,
+              perpendicularPoint.y,
+              startPoint.x,
+              startPoint.y,
+              endPoint.x,
+              endPoint.y
+            ) < 1; // 오차 허용
+            
+            // 점이 이미 변 위에 있다면 이 변은 건너뜀
+            if (isPointOnEdge) continue;
+            
+            const distance = pointToLineDistance(
+              mouseX,
+              mouseY,
+              startPoint.x,
+              startPoint.y,
+              endPoint.x,
+              endPoint.y
+            );
+            
+            if (distance < minDistance && distance < 10) {
+              minDistance = distance;
+              
+              // 수선의 발 계산 - 선택한 점에서 선분에 내린 수직점
+              const footPoint = calculatePerpendicularFoot(
+                perpendicularPoint,
+                { x: startPoint.x, y: startPoint.y },
+                { x: endPoint.x, y: endPoint.y }
+              );
+              
+              // 임시 선분 객체 생성
+              const tempLine: LineSegment = {
+                startPoint: { 
+                  x: startPoint.x, 
+                  y: startPoint.y,
+                  label: "", 
+                  type: 'edge' 
+                },
+                endPoint: { 
+                  x: endPoint.x, 
+                  y: endPoint.y,
+                  label: "", 
+                  type: 'edge' 
+                }
+              };
+              
+              closestLineInfo = {
+                line: tempLine,
+                shapeIndex
+              };
+              
+              tempPosition = footPoint;
+            }
+          }
+        } else if (shape.type === 'circle') {
+          // 원의 테두리 확인
+          const centerX = shape.center ? shape.center.x : shape.x + shape.width/2;
+          const centerY = shape.center ? shape.center.y : shape.y + shape.height/2;
+          const radius = shape.width / 2;
+          
+          // 선택한 점이 원 위에 있는지 확인
+          const distPointToCenter = Math.sqrt(
+            Math.pow(perpendicularPoint.x - centerX, 2) + 
+            Math.pow(perpendicularPoint.y - centerY, 2)
+          );
+          const isPointOnCircle = Math.abs(distPointToCenter - radius) < 1; // 오차 허용
+          
+          // 점이 이미 원 위에 있다면 건너뜀
+          if (isPointOnCircle) continue;
+          
+          // 중심에서 마우스까지의 거리
+          const distToCenter = Math.sqrt(
+            Math.pow(mouseX - centerX, 2) + Math.pow(mouseY - centerY, 2)
+          );
+          
+          // 원의 테두리와 마우스 사이의 거리
+          const distToEdge = Math.abs(distToCenter - radius);
+          
+          if (distToEdge < 10 && distToEdge < minDistance) {
+            minDistance = distToEdge;
+            
+            // 원 중심에서 선택한 점으로의 방향 벡터 계산
+            const dirX = perpendicularPoint.x - centerX;
+            const dirY = perpendicularPoint.y - centerY;
+            const dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
+            
+            // 방향 벡터를 정규화
+            const normalizedDirX = dirX / dirLength;
+            const normalizedDirY = dirY / dirLength;
+            
+            // 방향 벡터 방향으로 원 테두리 위 점 계산 (수선의 발)
+            const footPointX = centerX + normalizedDirX * radius;
+            const footPointY = centerY + normalizedDirY * radius;
+            
+            // 원 테두리에서의 접선 방향 (반시계 방향 90도 회전)
+            const tangentDx = -normalizedDirY;
+            const tangentDy = normalizedDirX;
+            
+            // 임시 선분 객체 생성 (원의 접선)
+            const tempLine: LineSegment = {
+              startPoint: { 
+                x: footPointX - tangentDx * radius, // 접선 시작점
+                y: footPointY - tangentDy * radius,
+                label: "", 
+                type: 'edge' 
+              },
+              endPoint: { 
+                x: footPointX + tangentDx * radius, // 접선 종점
+                y: footPointY + tangentDy * radius,
+                label: "", 
+                type: 'edge' 
+              }
+            };
+            
+            closestLineInfo = {
+              line: tempLine,
+              shapeIndex
+            };
+            
+            tempPosition = { x: footPointX, y: footPointY };
+          }
+        }
+      }
+      
+      if (closestLineInfo && tempPosition) {
+        setHoveredLine(closestLineInfo);
+        document.body.style.cursor = 'pointer';
+        setTempPointPosition(tempPosition);
+      } else {
+        setHoveredLine(null);
+        document.body.style.cursor = 'default';
+        setTempPointPosition(null);
+      }
+    }
+  };
+
+  // 도형 테두리 꼭짓점 계산을 위한 유틸리티 함수
+  const getShapeVertices = (shape: Shape): { x: number; y: number }[] => {
+    if (shape.type === 'triangle') {
+      // 삼각형 꼭짓점 계산
+      if (shape.triangleVertices && shape.triangleVertices.length === 3) {
+        return shape.triangleVertices;
+      } else {
+        // 기본 삼각형 꼭짓점
+        return [
+          { x: shape.x + shape.width/2, y: shape.y },              // 상단
+          { x: shape.x, y: shape.y + shape.height },               // 좌측 하단
+          { x: shape.x + shape.width, y: shape.y + shape.height }  // 우측 하단
+        ];
+      }
+    } else if (shape.type === 'rectangle') {
+      // 사각형 꼭짓점
+      return [
+        { x: shape.x, y: shape.y },                          // 좌상단
+        { x: shape.x + shape.width, y: shape.y },            // 우상단
+        { x: shape.x + shape.width, y: shape.y + shape.height }, // 우하단
+        { x: shape.x, y: shape.y + shape.height }            // 좌하단
+      ];
+    } else if (shape.type === 'circle') {
+      // 원은 꼭짓점이 없지만 필요한 경우 중심점 반환
+      const centerX = shape.center ? shape.center.x : shape.x + shape.width/2;
+      const centerY = shape.center ? shape.center.y : shape.y + shape.height/2;
+      return [{ x: centerX, y: centerY }];
+    }
+    
+    return [];
+  };
+
+  // 도형 테두리(변) 계산을 위한 유틸리티 함수
+  const getShapeEdges = (shape: Shape): { start: { x: number; y: number }, end: { x: number; y: number } }[] => {
+    const edges: { start: { x: number; y: number }, end: { x: number; y: number } }[] = [];
+    
+    if (shape.type === 'triangle' || shape.type === 'rectangle') {
+      const vertices = getShapeVertices(shape);
+      
+      // 꼭짓점을 이용해 변(선분) 생성
+      for (let i = 0; i < vertices.length; i++) {
+        const startPoint = vertices[i];
+        const endPoint = vertices[(i + 1) % vertices.length]; // 마지막 점은 첫 번째 점과 연결
+        
+        edges.push({
+          start: startPoint,
+          end: endPoint
+        });
+      }
+    }
+    // 원은 별도 처리 필요 없음 (원 테두리는 호버링에서 직접 계산)
+    
+    return edges;
+  };
+
+  // 선분 호버링 검사를 위한 유틸리티 함수 (수선의 발 도구에서 사용)
+  const findClosestLine = (
+    mouseX: number,
+    mouseY: number,
+    excludePoint?: Point
+  ): { closestLineInfo: { line: LineSegment; shapeIndex: number } | null, tempPosition: { x: number, y: number } | null } => {
+    let closestLineInfo: { line: LineSegment; shapeIndex: number } | null = null;
+    let minDistance = Number.MAX_VALUE;
+    let tempPosition: { x: number, y: number } | null = null;
+    
+    for (let shapeIndex = 0; shapeIndex < shapes.length; shapeIndex++) {
+      const shape = shapes[shapeIndex];
+      
+      // 기존에 그려진 선분 확인
+      for (let lineIndex = 0; lineIndex < shape.lines.length; lineIndex++) {
+        const line = shape.lines[lineIndex];
+        
+        // 제외할 점이 이 선분 위에 있는지 확인
+        if (excludePoint) {
+          const isPointOnLine = (
+            (line.startPoint === excludePoint) || 
+            (line.endPoint === excludePoint) ||
+            pointToLineDistance(
+              excludePoint.x,
+              excludePoint.y,
+              line.startPoint.x,
+              line.startPoint.y,
+              line.endPoint.x,
+              line.endPoint.y
+            ) < 1 // 오차 허용
+          );
+          
+          // 점이 이미 선분 위에 있다면 이 선분은 건너뜀
+          if (isPointOnLine) continue;
+        }
+        
+        const distance = pointToLineDistance(
+          mouseX, 
+          mouseY, 
+          line.startPoint.x, 
+          line.startPoint.y, 
+          line.endPoint.x, 
+          line.endPoint.y
+        );
+        
+        if (distance < minDistance && distance < 10) {
+          minDistance = distance;
+          closestLineInfo = {
+            line,
+            shapeIndex
+          };
+          
+          // 선분 위의 점 위치 계산
+          const footPoint = calculatePerpendicularFoot(
+            { x: mouseX, y: mouseY },
+            line.startPoint,
+            line.endPoint
+          );
+          
+          tempPosition = footPoint;
+        }
+      }
+      
+      // 도형의 테두리(변) 확인
+      if (shape.type === 'triangle' || shape.type === 'rectangle') {
+        const edges = getShapeEdges(shape);
+        
+        for (const edge of edges) {
+          const startPoint = edge.start;
+          const endPoint = edge.end;
+          
+          // 제외할 점이 이 변 위에 있는지 확인
+          if (excludePoint) {
+            const isPointOnEdge = pointToLineDistance(
+              excludePoint.x,
+              excludePoint.y,
+              startPoint.x,
+              startPoint.y,
+              endPoint.x,
+              endPoint.y
+            ) < 1; // 오차 허용
+            
+            // 점이 이미 변 위에 있다면 이 변은 건너뜀
+            if (isPointOnEdge) continue;
+          }
+          
+          const distance = pointToLineDistance(
+            mouseX,
+            mouseY,
+            startPoint.x,
+            startPoint.y,
+            endPoint.x,
+            endPoint.y
+          );
+          
+          if (distance < minDistance && distance < 10) {
+            minDistance = distance;
+            
+            // 임시 선분 객체 생성
+            const tempLine: LineSegment = {
+              startPoint: { 
+                x: startPoint.x, 
+                y: startPoint.y,
+                label: "", 
+                type: 'edge' 
+              },
+              endPoint: { 
+                x: endPoint.x, 
+                y: endPoint.y,
+                label: "", 
+                type: 'edge' 
+              }
+            };
+            
+            closestLineInfo = {
+              line: tempLine,
+              shapeIndex
+            };
+            
+            // 선분 위의 점 위치 계산
+            const footPoint = calculatePerpendicularFoot(
+              { x: mouseX, y: mouseY },
+              { x: startPoint.x, y: startPoint.y },
+              { x: endPoint.x, y: endPoint.y }
+            );
+            
+            tempPosition = footPoint;
+          }
+        }
+      } else if (shape.type === 'circle') {
+        // 원의 테두리 확인
+        const centerX = shape.center ? shape.center.x : shape.x + shape.width/2;
+        const centerY = shape.center ? shape.center.y : shape.y + shape.height/2;
+        const radius = shape.width / 2;
+        
+        // 제외할 점이 원 위에 있는지 확인
+        if (excludePoint) {
+          const distPointToCenter = Math.sqrt(
+            Math.pow(excludePoint.x - centerX, 2) + 
+            Math.pow(excludePoint.y - centerY, 2)
+          );
+          const isPointOnCircle = Math.abs(distPointToCenter - radius) < 1; // 오차 허용
+          
+          // 점이 이미 원 위에 있다면 건너뜀
+          if (isPointOnCircle) continue;
+        }
+        
+        // 중심에서 마우스까지의 거리
+        const distToCenter = Math.sqrt(
+          Math.pow(mouseX - centerX, 2) + Math.pow(mouseY - centerY, 2)
+        );
+        
+        // 원의 테두리와 마우스 사이의 거리
+        const distToEdge = Math.abs(distToCenter - radius);
+        
+        if (distToEdge < 10 && distToEdge < minDistance) {
+          minDistance = distToEdge;
+          
+          // 원 위의 점 계산 (마우스 방향으로 원 테두리 위의 점)
+          const angle = Math.atan2(mouseY - centerY, mouseX - centerX);
+          const edgeX = centerX + radius * Math.cos(angle);
+          const edgeY = centerY + radius * Math.sin(angle);
+          
+          // 원 테두리의 접선 계산 (반시계 방향으로 90도 회전)
+          const tangentEndX = edgeX - radius * Math.sin(angle);
+          const tangentEndY = edgeY + radius * Math.cos(angle);
+          
+          // 임시 선분 객체 생성 (원의 접선 - 수선 계산에 사용)
+          const tempLine: LineSegment = {
+            startPoint: { 
+              x: edgeX, 
+              y: edgeY,
+              label: "", 
+              type: 'edge' 
+            },
+            endPoint: { 
+              x: tangentEndX, 
+              y: tangentEndY,
+              label: "", 
+              type: 'edge' 
+            }
+          };
+          
+          closestLineInfo = {
+            line: tempLine,
+            shapeIndex
+          };
+          
+          // 원 테두리 위의 정확한 점 위치
+          tempPosition = { x: edgeX, y: edgeY };
+        }
+      }
+    }
+    
+    return { closestLineInfo, tempPosition };
+  };
+
+  // 직각 표시 사각형의 위치를 계산하는 함수를 기역자 모양으로 그리기 위한 함수로 변경
+  const calculateRightAngleMarker = (
+    vertex: { x: number; y: number },
+    point1: { x: number; y: number },
+    point2: { x: number; y: number },
+    size: number = 12
+  ): string => {
+    // 벡터 계산
+    const vector1 = {
+      x: point1.x - vertex.x,
+      y: point1.y - vertex.y
+    };
+    
+    const vector2 = {
+      x: point2.x - vertex.x,
+      y: point2.y - vertex.y
+    };
+    
+    // 벡터 정규화
+    const length1 = Math.sqrt(vector1.x * vector1.x + vector1.y * vector1.y);
+    const length2 = Math.sqrt(vector2.x * vector2.x + vector2.y * vector2.y);
+    
+    const normalized1 = {
+      x: vector1.x / length1,
+      y: vector1.y / length1
+    };
+    
+    const normalized2 = {
+      x: vector2.x / length2,
+      y: vector2.y / length2
+    };
+    
+    // 각 선분 위의 시작점 (정확한 직각을 위해 꼭짓점에서 약간 떨어진 지점)
+    const lineStart1 = {
+      x: vertex.x + normalized1.x * (size * 0.6),
+      y: vertex.y + normalized1.y * (size * 0.6)
+    };
+    
+    const lineStart2 = {
+      x: vertex.x + normalized2.x * (size * 0.6),
+      y: vertex.y + normalized2.y * (size * 0.6)
+    };
+    
+    // 첫 번째 선분에 정확히 수직인 벡터 (90도 회전)
+    const perp1 = {
+      x: -normalized1.y,
+      y: normalized1.x
+    };
+    
+    // 두 번째 선분에 정확히 수직인 벡터 (90도 회전)
+    const perp2 = {
+      x: -normalized2.y,
+      y: normalized2.x
+    };
+    
+    // 내각 방향인지 확인 (두 벡터의 외적으로 판단)
+    const crossProduct = normalized1.x * normalized2.y - normalized1.y * normalized2.x;
+    
+    // 내각 방향이 아니면 방향 반전
+    if (crossProduct * (normalized1.x * perp2.x + normalized1.y * perp2.y) > 0) {
+      perp1.x = -perp1.x;
+      perp1.y = -perp1.y;
+    }
+    
+    if (crossProduct * (normalized2.x * perp1.x + normalized2.y * perp1.y) > 0) {
+      perp2.x = -perp2.x;
+      perp2.y = -perp2.y;
+    }
+    
+    // 수직선의 길이
+    const perpLength = size * 0.5;
+    
+    // 수직선 끝점 계산
+    const perpEnd1 = {
+      x: lineStart1.x + perp1.x * perpLength,
+      y: lineStart1.y + perp1.y * perpLength
+    };
+    
+    const perpEnd2 = {
+      x: lineStart2.x + perp2.x * perpLength,
+      y: lineStart2.y + perp2.y * perpLength
+    };
+    
+    // 두 직각선을 SVG 패스로 그리기
+    return `M ${lineStart1.x} ${lineStart1.y} L ${perpEnd1.x} ${perpEnd1.y} L ${perpEnd2.x} ${perpEnd2.y} L ${lineStart2.x} ${lineStart2.y}`;
+  };
+
   return (
     <div
       ref={canvasRef}
@@ -1373,6 +2561,7 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
         handleMouseUp();
         setHoveredPoint(null);
         setHoveredLine(null);
+        setTempPointPosition(null);
       }}
     >
       {shapes.map((shape, index) => {
@@ -1470,47 +2659,41 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
                   {Math.abs(angle.value - 90) < 0.1 ? (
                     // 직각 표시 (부채꼴 없이 작은 직각 표시만 사용)
                     <React.Fragment>
-                      {/* 직각 표시 사각형 */}
-                      {(() => {
-                        const squarePos = calculateRightAngleSquarePosition(
+                      {/* 직각 표시 - 기역자 모양 */}
+                      <path
+                        d={calculateRightAngleMarker(
                           { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
                           { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
                           { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          10
-                        );
-                        return (
-                          <rect
-                            x={squarePos.x}
-                            y={squarePos.y}
-                            width={squarePos.width}
-                            height={squarePos.height}
-                            fill="none"
-                            stroke="#444444"
-                            strokeWidth="1.0"
-                          />
-                        );
-                      })()}
-                      {/* 각도 텍스트 - 직각일 때 */}
-                      <text
-                        x={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).x}
-                        y={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).y + 4}
-                        fill="#444444"
-                        fontSize="12"
-                        textAnchor="middle"
-                        style={{ textShadow: "0px 0px 3px white" }}
-                      >
-                        {angle.value}°
-                      </text>
+                          15
+                        )}
+                        fill="none"
+                        stroke="#444444"
+                        strokeWidth="1.0"
+                      />
+                      {/* 각도 텍스트 - 직각일 때 (showLabel이 false가 아닐 때만 표시) */}
+                      {angle.showLabel !== false && (
+                        <text
+                          x={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).x}
+                          y={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).y + 4}
+                          fill="#444444"
+                          fontSize="12"
+                          textAnchor="middle"
+                          style={{ textShadow: "0px 0px 3px white" }}
+                        >
+                          {angle.value}°
+                        </text>
+                      )}
                     </React.Fragment>
                   ) : (
                     // 일반 각도 부채꼴 표시
@@ -1526,27 +2709,29 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
                         stroke="#444444"
                         strokeWidth="1.0"
                       />
-                      {/* 각도 텍스트 */}
-                      <text
-                        x={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          35
-                        ).x}
-                        y={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          35
-                        ).y + 4}
-                        fill="#444444"
-                        fontSize="12"
-                        textAnchor="middle"
-                        style={{ textShadow: "0px 0px 3px white" }}
-                      >
-                        {angle.value}°
-                      </text>
+                      {/* 각도 텍스트 (showLabel이 false가 아닐 때만 표시) */}
+                      {angle.showLabel !== false && (
+                        <text
+                          x={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            35
+                          ).x}
+                          y={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            35
+                          ).y + 4}
+                          fill="#444444"
+                          fontSize="12"
+                          textAnchor="middle"
+                          style={{ textShadow: "0px 0px 3px white" }}
+                        >
+                          {angle.value}°
+                        </text>
+                      )}
                     </React.Fragment>
                   )}
                 </svg>
@@ -1666,47 +2851,41 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
                   {Math.abs(angle.value - 90) < 0.1 ? (
                     // 직각 표시 (부채꼴 없이 작은 직각 표시만 사용)
                     <React.Fragment>
-                      {/* 직각 표시 사각형 */}
-                      {(() => {
-                        const squarePos = calculateRightAngleSquarePosition(
+                      {/* 직각 표시 - 기역자 모양 */}
+                      <path
+                        d={calculateRightAngleMarker(
                           { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
                           { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
                           { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          10
-                        );
-                        return (
-                          <rect
-                            x={squarePos.x}
-                            y={squarePos.y}
-                            width={squarePos.width}
-                            height={squarePos.height}
-                            fill="none"
-                            stroke="#444444"
-                            strokeWidth="1.0"
-                          />
-                        );
-                      })()}
-                      {/* 각도 텍스트 - 직각일 때 */}
-                      <text
-                        x={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).x}
-                        y={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).y + 4}
-                        fill="#444444"
-                        fontSize="12"
-                        textAnchor="middle"
-                        style={{ textShadow: "0px 0px 3px white" }}
-                      >
-                        {angle.value}°
-                      </text>
+                          15
+                        )}
+                        fill="none"
+                        stroke="#444444"
+                        strokeWidth="1.0"
+                      />
+                      {/* 각도 텍스트 - 직각일 때 (showLabel이 false가 아닐 때만 표시) */}
+                      {angle.showLabel !== false && (
+                        <text
+                          x={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).x}
+                          y={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).y + 4}
+                          fill="#444444"
+                          fontSize="12"
+                          textAnchor="middle"
+                          style={{ textShadow: "0px 0px 3px white" }}
+                        >
+                          {angle.value}°
+                        </text>
+                      )}
                     </React.Fragment>
                   ) : (
                     // 일반 각도 부채꼴 표시
@@ -1722,27 +2901,29 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
                         stroke="#444444"
                         strokeWidth="1.0"
                       />
-                      {/* 각도 텍스트 */}
-                      <text
-                        x={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          35
-                        ).x}
-                        y={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          35
-                        ).y + 4}
-                        fill="#444444"
-                        fontSize="12"
-                        textAnchor="middle"
-                        style={{ textShadow: "0px 0px 3px white" }}
-                      >
-                        {angle.value}°
-                      </text>
+                      {/* 각도 텍스트 (showLabel이 false가 아닐 때만 표시) */}
+                      {angle.showLabel !== false && (
+                        <text
+                          x={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            35
+                          ).x}
+                          y={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            35
+                          ).y + 4}
+                          fill="#444444"
+                          fontSize="12"
+                          textAnchor="middle"
+                          style={{ textShadow: "0px 0px 3px white" }}
+                        >
+                          {angle.value}°
+                        </text>
+                      )}
                     </React.Fragment>
                   )}
                 </g>
@@ -1848,47 +3029,41 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
                   {Math.abs(angle.value - 90) < 0.1 ? (
                     // 직각 표시 (부채꼴 없이 작은 직각 표시만 사용)
                     <React.Fragment>
-                      {/* 직각 표시 사각형 */}
-                      {(() => {
-                        const squarePos = calculateRightAngleSquarePosition(
+                      {/* 직각 표시 - 기역자 모양 */}
+                      <path
+                        d={calculateRightAngleMarker(
                           { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
                           { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
                           { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          10
-                        );
-                        return (
-                          <rect
-                            x={squarePos.x}
-                            y={squarePos.y}
-                            width={squarePos.width}
-                            height={squarePos.height}
-                            fill="none"
-                            stroke="#444444"
-                            strokeWidth="1.0"
-                          />
-                        );
-                      })()}
-                      {/* 각도 텍스트 - 직각일 때 */}
-                      <text
-                        x={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).x}
-                        y={calculateAngleTextPosition(
-                          { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
-                          { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
-                          { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
-                          40
-                        ).y + 4}
-                        fill="#444444"
-                        fontSize="12"
-                        textAnchor="middle"
-                        style={{ textShadow: "0px 0px 3px white" }}
-                      >
-                        {angle.value}°
-                      </text>
+                          15
+                        )}
+                        fill="none"
+                        stroke="#444444"
+                        strokeWidth="1.0"
+                      />
+                      {/* 각도 텍스트 - 직각일 때 (showLabel이 false가 아닐 때만 표시) */}
+                      {angle.showLabel !== false && (
+                        <text
+                          x={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).x}
+                          y={calculateAngleTextPosition(
+                            { x: angle.vertex.x - shape.x, y: angle.vertex.y - shape.y },
+                            { x: angle.lines[0].startPoint.x - shape.x, y: angle.lines[0].startPoint.y - shape.y },
+                            { x: angle.lines[1].endPoint.x - shape.x, y: angle.lines[1].endPoint.y - shape.y },
+                            40
+                          ).y + 4}
+                          fill="#444444"
+                          fontSize="12"
+                          textAnchor="middle"
+                          style={{ textShadow: "0px 0px 3px white" }}
+                        >
+                          {angle.value}°
+                        </text>
+                      )}
                     </React.Fragment>
                   ) : (
                     // 일반 각도 부채꼴 표시
@@ -2114,6 +3289,129 @@ const Canvas = forwardRef<CanvasRef, CanvasProps>(({ selectedShape, selectedTool
           }}
         />
       )}
+      
+      {transformingVertex && (
+        <div className="transform-hint" style={{
+          position: 'absolute',
+          bottom: '10px',
+          left: '10px',
+          padding: '5px 10px',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          borderRadius: '4px',
+          fontSize: '14px',
+          pointerEvents: 'none'
+        }}>
+          마우스를 떼면 변형이 완료됩니다
+        </div>
+      )}
+      
+      {/* 실시간 각도 표시 */}
+      {realtimeAngles && realtimeAngles.angles && realtimeAngles.angles.length > 0 && (
+        <div className="realtime-angles" style={{
+          position: 'absolute',
+          top: '10px',
+          right: '10px',
+          padding: '5px 10px',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          borderRadius: '4px',
+          fontSize: '14px',
+          pointerEvents: 'none',
+          zIndex: 1000
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>실시간 각도:</div>
+          {realtimeAngles.angles.map((angle, idx) => (
+            <div key={idx} style={{ 
+              margin: '2px 0',
+              color: Math.abs(angle.value - 90) < 0.1 ? '#00ff00' : 'white' // 직각이면 녹색으로 표시
+            }}>
+              {angle.vertex.label}⦡: {angle.value.toFixed(1)}°
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* 수선의 발 도구 사용 시 선택된 점 표시 */}
+      {selectedTool === 'perpendicular' && perpendicularPoint && (
+        <div
+          className="selected-perpendicular-point"
+          style={{
+            position: 'absolute',
+            left: `${perpendicularPoint.x - 5}px`,
+            top: `${perpendicularPoint.y - 5}px`,
+            width: '10px',
+            height: '10px',
+            borderRadius: '50%',
+            backgroundColor: '#ff3366',
+            pointerEvents: 'none',
+            zIndex: 1000
+          }}
+        />
+      )}
+      
+      {/* 수선의 발 도구 사용 시 안내 메시지 표시 */}
+      {selectedTool === 'perpendicular' && (
+        <div className="perpendicular-hint" style={{
+          position: 'absolute',
+          bottom: '10px',
+          left: '10px',
+          padding: '5px 10px',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          borderRadius: '4px',
+          fontSize: '14px',
+          pointerEvents: 'none'
+        }}>
+          {perpendicularStep === 0 
+            ? "점을 선택하거나 선분 위에 새 점을 생성하세요" 
+            : "수선을 내릴 선분을 선택하세요"}
+        </div>
+      )}
+      
+      {/* 수선의 발 도구 사용 시 임시 점 표시 (선분 위 호버링 시) */}
+      {selectedTool === 'perpendicular' && tempPointPosition && (
+        <div
+          className="temp-point"
+          style={{
+            position: 'absolute',
+            left: `${tempPointPosition.x - 4}px`,
+            top: `${tempPointPosition.y - 4}px`,
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: perpendicularStep === 0 ? '#00aaff' : '#ffaa00',
+            pointerEvents: 'none',
+            zIndex: 999
+          }}
+        />
+      )}
+      
+      {/* 수선의 발 미리보기 선 표시 (두 번째 단계에서 선분 호버링 시) */}
+      {selectedTool === 'perpendicular' && perpendicularStep === 1 && perpendicularPoint && tempPointPosition && (
+        <svg
+          className="perpendicular-preview"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none',
+            zIndex: 998
+          }}
+        >
+          <line
+            x1={perpendicularPoint.x}
+            y1={perpendicularPoint.y}
+            x2={tempPointPosition.x}
+            y2={tempPointPosition.y}
+            stroke="#ffaa00"
+            strokeWidth="1.5"
+            strokeDasharray="4,4"
+          />
+        </svg>
+      )}
     </div>
   );
 });
@@ -2251,75 +3549,6 @@ const calculateAngleTextPosition = (
   return {
     x: vertex.x + adjustedVector.x * textRadius,
     y: vertex.y + adjustedVector.y * textRadius
-  };
-};
-
-// 직각 표시 사각형의 위치를 계산하는 함수
-const calculateRightAngleSquarePosition = (
-  vertex: { x: number; y: number },
-  point1: { x: number; y: number },
-  point2: { x: number; y: number },
-  size: number = 12
-): { x: number; y: number; width: number; height: number } => {
-  // 벡터 계산
-  const vector1 = {
-    x: point1.x - vertex.x,
-    y: point1.y - vertex.y
-  };
-  
-  const vector2 = {
-    x: point2.x - vertex.x,
-    y: point2.y - vertex.y
-  };
-  
-  // 벡터 정규화
-  const length1 = Math.sqrt(vector1.x * vector1.x + vector1.y * vector1.y);
-  const length2 = Math.sqrt(vector2.x * vector2.x + vector2.y * vector2.y);
-  
-  const normalized1 = {
-    x: vector1.x / length1,
-    y: vector1.y / length1
-  };
-  
-  const normalized2 = {
-    x: vector2.x / length2,
-    y: vector2.y / length2
-  };
-  
-  // 두 벡터의 중간 벡터 계산
-  const middleVector = {
-    x: normalized1.x + normalized2.x,
-    y: normalized1.y + normalized2.y
-  };
-  
-  // 중간 벡터 정규화
-  const middleLength = Math.sqrt(middleVector.x * middleVector.x + middleVector.y * middleVector.y);
-  
-  // 두 벡터 사이의 내각 방향으로 위치 계산
-  let positionVector;
-  
-  if (middleLength < 0.0001) {
-    // 두 벡터가 180도에 가까울 때 (반대 방향)
-    positionVector = {
-      x: -normalized1.y,
-      y: normalized1.x
-    };
-  } else {
-    // 일반적인 경우: 두 벡터의 합 벡터 방향 사용
-    positionVector = {
-      x: middleVector.x / middleLength,
-      y: middleVector.y / middleLength
-    };
-  }
-  
-  // 꼭짓점에서 사각형을 약간 떨어뜨려 배치
-  const offset = size / 2;
-  
-  return {
-    x: vertex.x + positionVector.x * offset - size / 2,
-    y: vertex.y + positionVector.y * offset - size / 2,
-    width: size,
-    height: size
   };
 };
 

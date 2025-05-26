@@ -3,9 +3,9 @@ import './ShapeMenu.css';
 
 interface ShapeMenuProps {
   onSelectShape: (shape: 'circle' | 'triangle' | 'rectangle' | null) => void;
-  onSelectTool: (tool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform') => void;
+  onSelectTool: (tool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform' | 'perpendicular') => void;
   selectedShape: 'circle' | 'triangle' | 'rectangle' | null;
-  selectedTool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform';
+  selectedTool: 'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform' | 'perpendicular';
   onClearShapes: () => void;
   onUndo: () => void;
 }
@@ -19,12 +19,14 @@ const ShapeMenu: React.FC<ShapeMenuProps> = ({
   onUndo
 }) => {
   const [showTriangleDropdown, setShowTriangleDropdown] = useState(false);
+  const [showLineDropdown, setShowLineDropdown] = useState(false);
 
   // 드롭다운 외부 클릭 시 닫기
   const handleDocumentClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     if (!target.closest('.dropdown-container')) {
       setShowTriangleDropdown(false);
+      setShowLineDropdown(false);
     }
   };
 
@@ -108,12 +110,42 @@ const ShapeMenu: React.FC<ShapeMenuProps> = ({
         >
           점
         </button>
-        <button
-          className={`tool-button ${selectedTool === 'line' ? 'active' : ''}`}
-          onClick={() => onSelectTool('line')}
-        >
-          선분
-        </button>
+        
+        {/* 선분 드롭다운 */}
+        <div className="dropdown-container">
+          <button
+            className={`tool-button ${(selectedTool === 'line' || selectedTool === 'perpendicular') ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowLineDropdown(!showLineDropdown);
+            }}
+          >
+            선분 ▼
+          </button>
+          {showLineDropdown && (
+            <div className="dropdown-menu">
+              <button
+                className={`dropdown-item ${selectedTool === 'line' ? 'active' : ''}`}
+                onClick={() => {
+                  onSelectTool('line');
+                  setShowLineDropdown(false);
+                }}
+              >
+                선분 그리기
+              </button>
+              <button
+                className={`dropdown-item ${selectedTool === 'perpendicular' ? 'active' : ''}`}
+                onClick={() => {
+                  onSelectTool('perpendicular');
+                  setShowLineDropdown(false);
+                }}
+              >
+                수선의 발
+              </button>
+            </div>
+          )}
+        </div>
+        
         <button
           className={`tool-button ${selectedTool === 'length' ? 'active' : ''}`}
           onClick={() => onSelectTool('length')}

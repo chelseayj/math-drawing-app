@@ -5,7 +5,7 @@ import ShapeMenu from './components/ShapeMenu';
 
 function App() {
   const [selectedShape, setSelectedShape] = useState<'circle' | 'triangle' | 'rectangle' | null>(null);
-  const [selectedTool, setSelectedTool] = useState<'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform'>('shape');
+  const [selectedTool, setSelectedTool] = useState<'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform' | 'perpendicular'>('shape');
   const canvasRef = useRef<CanvasRef>(null);
 
   return (
