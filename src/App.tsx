@@ -1,27 +1,44 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import './App.css';
-import Canvas, { CanvasRef } from './components/Canvas';
-import ShapeMenu from './components/ShapeMenu';
+import Canvas from './components/Canvas';
+import Toolbar from './components/Toolbar';
+import { Shape, Tool } from './types';
 
 function App() {
-  const [selectedShape, setSelectedShape] = useState<'circle' | 'triangle' | 'rectangle' | null>(null);
-  const [selectedTool, setSelectedTool] = useState<'shape' | 'point' | 'line' | 'length' | 'angle' | 'transform' | 'perpendicular'>('shape');
-  const canvasRef = useRef<CanvasRef>(null);
+  const [selectedTool, setSelectedTool] = useState<Tool>('circle');
+  const [shapes, setShapes] = useState<Shape[]>([]);
+
+  const handleShapeAdd = useCallback((shape: Shape) => {
+    setShapes(prev => [...prev, shape]);
+  }, []);
+
+  const handleShapeDelete = useCallback((shapeId: string) => {
+    setShapes(prev => prev.filter(shape => shape.id !== shapeId));
+  }, []);
+
+  const handleShapeUpdate = useCallback((shapeId: string, updatedShape: Shape) => {
+    setShapes(prev => prev.map(shape => 
+      shape.id === shapeId ? updatedShape : shape
+    ));
+  }, []);
+
+  const handleClearAll = useCallback(() => {
+    setShapes([]);
+  }, []);
 
   return (
     <div className="App">
-      <Canvas 
-        selectedShape={selectedShape} 
-        selectedTool={selectedTool}
-        ref={canvasRef}
+      <Toolbar 
+        selectedTool={selectedTool} 
+        onToolSelect={setSelectedTool} 
       />
-      <ShapeMenu
-        onSelectShape={setSelectedShape}
-        onSelectTool={setSelectedTool}
-        selectedShape={selectedShape}
+      <Canvas 
         selectedTool={selectedTool}
-        onClearShapes={() => canvasRef.current?.clearAllShapes()}
-        onUndo={() => canvasRef.current?.undo()}
+        shapes={shapes}
+        onShapeAdd={handleShapeAdd}
+        onShapeDelete={handleShapeDelete}
+        onShapeUpdate={handleShapeUpdate}
+        onClearAll={handleClearAll}
       />
     </div>
   );
