@@ -1,15 +1,24 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Point, Shape, TransformState } from '../types';
+import { Point, Shape, TransformState, GeometryPoint, LineSegment } from '../types';
 import { findNearestVertex, updateShapeWithVertex } from '../utils/transformUtils';
+import { calculateTransformedPointPosition, calculateTransformedLinePosition } from '../utils/transformUpdateUtils';
 
 interface UseTransformEventsProps {
   shapes: Shape[];
+  points: GeometryPoint[];
+  lines: LineSegment[];
   onShapeUpdate: (shapeId: string, updatedShape: Shape) => void;
+  onPointUpdate: (pointId: string, newPosition: Point) => void;
+  onLineUpdate: (lineId: string, updatedLine: LineSegment) => void;
 }
 
 export const useTransformEvents = ({
   shapes,
-  onShapeUpdate
+  points,
+  lines,
+  onShapeUpdate,
+  onPointUpdate,
+  onLineUpdate
 }: UseTransformEventsProps) => {
   const [transformState, setTransformState] = useState<TransformState>({
     isTransforming: false,
@@ -21,7 +30,7 @@ export const useTransformEvents = ({
 
   const [isShiftPressed, setIsShiftPressed] = useState(false);
 
-  // Shift 키 이벤트 처리 (토스트 메시지 제거)
+  // Shift 키 이벤트 처리
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Shift' && transformState.isTransforming && !isShiftPressed) {
@@ -51,6 +60,31 @@ export const useTransformEvents = ({
   const isTransformableShape = useCallback((shape: Shape): boolean => {
     return shape.type === 'rectangle' || shape.type === 'triangle';
   }, []);
+
+  // 연관된 점들 업데이트
+  const updateRelatedPoints = useCallback((originalShape: Shape, transformedShape: Shape) => {
+    points.forEach(point => {
+      if (point.shapeId === originalShape.id) {
+        const newPosition = calculateTransformedPointPosition(point, originalShape, transformedShape);
+        if (newPosition) {
+          onPointUpdate(point.id, newPosition);
+        }
+      }
+    });
+  }, [points, onPointUpdate]);
+
+  // 연관된 선분들 업데이트
+  const updateRelatedLines = useCallback((originalShape: Shape, transformedShape: Shape) => {
+    lines.forEach(line => {
+      if (line.startReference === originalShape.id || line.endReference === originalShape.id) {
+        const lineUpdates = calculateTransformedLinePosition(line, originalShape, transformedShape);
+        if (lineUpdates) {
+          const updatedLine = { ...line, ...lineUpdates };
+          onLineUpdate(line.id, updatedLine);
+        }
+      }
+    });
+  }, [lines, onLineUpdate]);
 
   // 마우스 hover 처리 (커서 변경용)
   const handleTransformHover = useCallback((mousePoint: Point) => {
@@ -106,23 +140,29 @@ export const useTransformEvents = ({
       return;
     }
 
+    const originalShape = transformState.selectedShape;
+
     // 선택한 꼭짓점만 이동하여 도형 업데이트
     const updatedShape = updateShapeWithVertex(
-      transformState.selectedShape,
+      originalShape,
       transformState.selectedVertexIndex,
       mousePoint,
       isShiftPressed
     );
 
     // 도형 업데이트
-    onShapeUpdate(transformState.selectedShape.id, updatedShape);
+    onShapeUpdate(originalShape.id, updatedShape);
+
+    // 🔥 연관된 점들과 선분들 업데이트
+    updateRelatedPoints(originalShape, updatedShape);
+    updateRelatedLines(originalShape, updatedShape);
 
     // 상태 업데이트
     setTransformState(prev => ({
       ...prev,
       selectedShape: updatedShape
     }));
-  }, [transformState, onShapeUpdate, isShiftPressed]);
+  }, [transformState, onShapeUpdate, isShiftPressed, updateRelatedPoints, updateRelatedLines]);
 
   // 변형 완료
   const handleTransformEnd = useCallback(() => {

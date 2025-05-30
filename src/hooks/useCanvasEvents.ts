@@ -32,7 +32,8 @@ export const useCanvasEvents = (props: UseCanvasEventsProps) => {
   const {
     selectedTool, shapes, points, lines, onShapeAdd, onShapeDelete, onShapeUpdate, onClearAll,
     onPointClick, onPointCreate, onPointsByShapeDelete, onAllPointsClear,
-    onLineClick, onLineCreate, onLinesByShapeDelete, onAllLinesClear
+    onLineClick, onLineCreate, onLinesByShapeDelete, onAllLinesClear,
+    onPointUpdate, onLineUpdate
   } = props;
 
   // 분리된 훅들 사용
@@ -42,7 +43,11 @@ export const useCanvasEvents = (props: UseCanvasEventsProps) => {
   const pointEvents = usePointEvents({ shapes, onPointCreate });
   const transformEvents = useTransformEvents({ 
     shapes, 
-    onShapeUpdate
+    points,
+    lines,
+    onShapeUpdate,
+    onPointUpdate,
+    onLineUpdate
   });
 
   // 삭제 도구 처리
@@ -136,6 +141,27 @@ export const useCanvasEvents = (props: UseCanvasEventsProps) => {
     }
   }, [selectedTool, transformEvents, shapeEvents]);
 
+  // ESC 키 취소 처리
+  const handleEscapeCancel = useCallback(() => {
+    // 선분 그리기 중이면 취소
+    if (lineEvents.isDrawingLine) {
+      lineEvents.cancelLineDrawing();
+      return;
+    }
+    
+    // 도형 그리기 중이면 취소
+    if (shapeEvents.isDrawing) {
+      shapeEvents.cancelShapeDrawing();
+      return;
+    }
+    
+    // 변형 중이면 취소
+    if (transformEvents.transformState.isTransforming) {
+      transformEvents.handleTransformEnd();
+      return;
+    }
+  }, [lineEvents, shapeEvents, transformEvents]);
+
   return {
     currentShape: shapeEvents.currentShape,
     feedbackPoint: pointEvents.feedbackPoint,
@@ -147,11 +173,15 @@ export const useCanvasEvents = (props: UseCanvasEventsProps) => {
     isPerpendicularPreview: lineEvents.isPerpendicularPreview,
     isPerpendicular: lineEvents.isPerpendicular,
     edgeInfo: lineEvents.edgeInfo,
+    isPointToPoint: lineEvents.isPointToPoint,
+    pointToPointInfo: lineEvents.pointToPointInfo,
+    currentSnapType: lineEvents.currentSnapType,
     transformState: transformEvents.transformState,
     isTransformableShape: transformEvents.isTransformableShape,
     isShiftPressed: transformEvents.isShiftPressed,
     handleMouseDown,
     handleMouseMove,
-    handleMouseUp
+    handleMouseUp,
+    handleEscapeCancel
   };
 }; 

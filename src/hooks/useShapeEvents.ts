@@ -56,11 +56,21 @@ export const useShapeEvents = ({ onShapeAdd }: UseShapeEventsProps) => {
     setCurrentShape(null);
   }, [isDrawing, currentShape, onShapeAdd]);
 
+  // 도형 그리기 취소 (ESC 키용)
+  const cancelShapeDrawing = useCallback(() => {
+    if (isDrawing) {
+      setIsDrawing(false);
+      setStartPoint(null);
+      setCurrentShape(null);
+    }
+  }, [isDrawing]);
+
   return {
     isDrawing,
     currentShape,
     handleShapeStart,
     handleShapePreview,
-    handleShapeEnd
+    handleShapeEnd,
+    cancelShapeDrawing
   };
 }; 

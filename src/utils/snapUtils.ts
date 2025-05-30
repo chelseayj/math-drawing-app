@@ -5,6 +5,11 @@ import {
 } from './perpendicularUtils';
 import { findBasicSnapTarget } from './basicSnapUtils';
 import { findSnapTargetWithPerpendicularCorrection } from './perpendicularSnapUtils';
+import { 
+  findPointToPointSnap, 
+  isValidPointToPointConnection,
+  PointToPointSnap 
+} from './pointToPointSnapUtils';
 
 // 수선 스냅 타겟 찾기 (통합)
 export const findPerpendicularSnapTarget = (
@@ -24,7 +29,7 @@ export const findPerpendicularSnapTarget = (
   return null;
 };
 
-// 확장된 스냅 타겟 찾기 (기존 + 수선)
+// 확장된 스냅 타겟 찾기 (점-점 연결 우선 + 기존 + 수선)
 export const findSnapTargetWithPerpendicular = (
   mousePoint: Point,
   shapes: Shape[],
@@ -34,13 +39,31 @@ export const findSnapTargetWithPerpendicular = (
   tolerance: number = 15
 ): {
   point: Point;
-  type: 'point' | 'edge' | 'line' | 'free';
+  type: 'point' | 'vertex' | 'center' | 'edge' | 'line' | 'free';
   reference?: string;
+  vertexIndex?: number;
   isPerpendicular?: boolean;
   edgeInfo?: { start: Point; end: Point };
   isPerpendicularPreview?: boolean;
+  isPointToPoint?: boolean;
+  pointToPointInfo?: PointToPointSnap;
 } => {
-  // 기존 스냅 로직 (점, 테두리, 선분)
+  // 선분 그리기 중일 때 점-점 연결을 최우선으로 확인
+  if (lineStartPoint) {
+    const pointToPointSnap = findPointToPointSnap(lineStartPoint, mousePoint, points, shapes, 20);
+    
+    if (pointToPointSnap && isValidPointToPointConnection(lineStartPoint, pointToPointSnap.point)) {
+      return {
+        point: pointToPointSnap.point,
+        type: 'point',
+        reference: pointToPointSnap.targetPointId,
+        isPointToPoint: true,
+        pointToPointInfo: pointToPointSnap
+      };
+    }
+  }
+
+  // 기존 스냅 로직 (점, 도형 스냅 포인트, 테두리, 선분)
   const basicSnapTarget = findBasicSnapTarget(mousePoint, shapes, points, lines, tolerance);
   
   // 직각 보정이 포함된 스냅 타겟 찾기 (lineStartPoint가 있을 때만)
@@ -71,5 +94,8 @@ export const findSnapTargetWithPerpendicular = (
     }
   }
    
-  return basicSnapTarget;
+  return {
+    ...basicSnapTarget,
+    vertexIndex: basicSnapTarget.vertexIndex
+  };
 }; 

@@ -7,11 +7,11 @@ export interface Point {
 // 점 타입 (도형 위에 찍는 점)
 export interface GeometryPoint {
   id: string;
-  x: number;
-  y: number;
+  position: Point; // 점의 위치 정보
   label: string;
   shapeId: string; // 어떤 도형 위에 있는지
   type: 'vertex' | 'center' | 'edge'; // 꼭짓점, 중심점, 테두리점
+  vertexIndex?: number; // 꼭짓점인 경우 해당 인덱스
 }
 
 // 도형 기본 타입

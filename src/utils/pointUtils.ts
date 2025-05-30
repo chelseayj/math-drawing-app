@@ -3,14 +3,15 @@ import { findNearestSnapPoint } from './shapeSnapUtils';
 import { getClosestPointOnShapeEdge } from './shapeEdgeUtils';
 
 // 점이 도형 위에 놓일 수 있는지 확인 (테두리 또는 스냅 포인트)
-export const canPlacePointOnShape = (mousePoint: Point, shapes: Shape[]): { point: Point; shapeId: string; type: 'center' | 'vertex' | 'edge' } | null => {
+export const canPlacePointOnShape = (mousePoint: Point, shapes: Shape[]): { point: Point; shapeId: string; type: 'center' | 'vertex' | 'edge'; vertexIndex?: number } | null => {
   // 먼저 스냅 포인트 확인
   const snapPoint = findNearestSnapPoint(mousePoint, shapes);
   if (snapPoint) {
     return {
       point: snapPoint.point,
       shapeId: snapPoint.shapeId,
-      type: snapPoint.type
+      type: snapPoint.type,
+      vertexIndex: snapPoint.vertexIndex
     };
   }
   

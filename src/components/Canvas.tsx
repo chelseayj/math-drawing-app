@@ -4,6 +4,7 @@ import { CANVAS_STYLES } from '../constants/styles';
 import { usePointManagement } from '../hooks/usePointManagement';
 import { useLineManagement } from '../hooks/useLineManagement';
 import { useCanvasEvents } from '../hooks/useCanvasEvents';
+import { useKeyboardEvents } from '../hooks/useKeyboardEvents';
 import CanvasRenderer from './CanvasRenderer';
 import ToastMessage from './ToastMessage';
 
@@ -78,11 +79,15 @@ const Canvas: React.FC<CanvasProps> = ({
     isPerpendicularPreview,
     isPerpendicular,
     edgeInfo,
+    isPointToPoint,
+    pointToPointInfo,
+    currentSnapType,
     transformState,
     isShiftPressed,
     handleMouseDown,
     handleMouseMove,
-    handleMouseUp
+    handleMouseUp,
+    handleEscapeCancel
   } = useCanvasEvents({
     selectedTool,
     shapes,
@@ -102,6 +107,11 @@ const Canvas: React.FC<CanvasProps> = ({
     onAllLinesClear: clearAllLines,
     onPointUpdate: updatePoint,
     onLineUpdate: updateLine
+  });
+
+  // 키보드 이벤트 훅
+  useKeyboardEvents({
+    onEscapePressed: handleEscapeCancel
   });
 
   // 동적 커서 스타일 계산
@@ -137,6 +147,7 @@ const Canvas: React.FC<CanvasProps> = ({
         isTransforming={transformState.isTransforming}
         isShiftPressed={isShiftPressed}
         transformingShapeType={transformState.selectedShape?.type}
+        isDrawingShape={currentShape !== null}
       />
 
       {/* 캔버스 렌더러 */}
@@ -152,6 +163,9 @@ const Canvas: React.FC<CanvasProps> = ({
         isPerpendicularPreview={isPerpendicularPreview}
         isPerpendicular={isPerpendicular}
         edgeInfo={edgeInfo}
+        isPointToPoint={isPointToPoint}
+        pointToPointInfo={pointToPointInfo}
+        currentSnapType={currentSnapType}
         selectedTool={selectedTool}
       />
     </div>

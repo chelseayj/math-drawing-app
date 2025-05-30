@@ -22,7 +22,10 @@ export const usePointManagement = () => {
   // 점 업데이트 함수
   const updatePoint = useCallback((pointId: string, newPosition: Point) => {
     setPoints(prev => prev.map(p => 
-      p.id === pointId ? { ...p, x: newPosition.x, y: newPosition.y } : p
+      p.id === pointId ? { 
+        ...p, 
+        position: newPosition 
+      } : p
     ));
   }, []);
 
@@ -40,7 +43,7 @@ export const usePointManagement = () => {
   const handlePointClick = useCallback((clickPoint: Point): boolean => {
     for (let i = points.length - 1; i >= 0; i--) {
       const geometryPoint = points[i];
-      const distance = calculateDistance(clickPoint, { x: geometryPoint.x, y: geometryPoint.y });
+      const distance = calculateDistance(clickPoint, geometryPoint.position);
       if (distance <= POINT_RADIUS + 5) {
         deletePoint(geometryPoint.id);
         return true; // 점이 클릭되었음을 알림
@@ -59,11 +62,11 @@ export const usePointManagement = () => {
         
         const newPoint: GeometryPoint = {
           id: `point-${Date.now()}`,
-          x: placement.point.x,
-          y: placement.point.y,
+          position: placement.point,
           label,
           shapeId: placement.shapeId,
-          type: placement.type
+          type: placement.type,
+          vertexIndex: placement.vertexIndex
         };
         
         addPoint(newPoint);

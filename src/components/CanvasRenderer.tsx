@@ -1,5 +1,6 @@
 import React from 'react';
 import { Shape, GeometryPoint, LineSegment, Point, PerpendicularSnap } from '../types';
+import { PointToPointSnap } from '../utils/pointToPointSnapUtils';
 import ShapeRenderer from './renderers/ShapeRenderer';
 import LineRenderer from './renderers/LineRenderer';
 import PointRenderer from './renderers/PointRenderer';
@@ -16,6 +17,9 @@ interface CanvasRendererProps {
   isPerpendicularPreview: boolean;
   isPerpendicular: boolean;
   edgeInfo: { start: Point; end: Point } | null;
+  isPointToPoint: boolean;
+  pointToPointInfo: PointToPointSnap | null;
+  currentSnapType: string | null;
   selectedTool: string;
 }
 
@@ -29,6 +33,9 @@ const CanvasRenderer: React.FC<CanvasRendererProps> = ({
   previewLine,
   isPerpendicularPreview,
   isPerpendicular,
+  isPointToPoint,
+  pointToPointInfo,
+  currentSnapType,
   selectedTool
 }) => {
   return (
@@ -59,6 +66,9 @@ const CanvasRenderer: React.FC<CanvasRendererProps> = ({
         selectedTool={selectedTool}
         isPerpendicular={isPerpendicular}
         isPerpendicularPreview={isPerpendicularPreview}
+        isPointToPoint={isPointToPoint}
+        pointToPointInfo={pointToPointInfo}
+        currentSnapType={currentSnapType}
       />
     </svg>
   );

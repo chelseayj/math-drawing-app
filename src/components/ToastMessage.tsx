@@ -9,6 +9,7 @@ interface ToastMessageProps {
   isTransforming?: boolean;
   isShiftPressed?: boolean;
   transformingShapeType?: string;
+  isDrawingShape?: boolean;
 }
 
 const ToastMessage: React.FC<ToastMessageProps> = ({ 
@@ -17,20 +18,24 @@ const ToastMessage: React.FC<ToastMessageProps> = ({
   isDrawingLine,
   isTransforming,
   isShiftPressed,
-  transformingShapeType
+  transformingShapeType,
+  isDrawingShape
 }) => {
   const getToastMessage = () => {
     // 변형 도구 사용 중이고 Shift가 눌린 경우
     if (selectedTool === 'transform' && isTransforming && isShiftPressed) {
       if (transformingShapeType === 'triangle') {
-        return '직각삼각형을 만들 수 있습니다';
+        return '직각삼각형을 만들 수 있습니다 | ESC: 취소';
       } else if (transformingShapeType === 'rectangle') {
-        return '수평 평행사변형을 만들 수 있습니다';
+        return '수평 평행사변형을 만들 수 있습니다 | ESC: 취소';
       }
     }
     
     // 변형 도구 기본 메시지
     if (selectedTool === 'transform') {
+      if (isTransforming) {
+        return '도형의 꼭짓점을 드래그해서 변형하세요 | ESC: 취소';
+      }
       return '도형의 꼭짓점을 드래그해서 변형하세요 | Shift + 드래그: 특수 변형 (직각삼각형, 수평 평행사변형)';
     }
     
@@ -45,10 +50,12 @@ const ToastMessage: React.FC<ToastMessageProps> = ({
           : '도형의 테두리, 중심점, 꼭짓점에 점을 찍을 수 있습니다';
       case 'line':
         return isDrawingLine
-          ? '두 번째 위치를 선택하세요 (점, 테두리, 선분, 빈 공간 가능) - 녹색 원: 스냅 가능'
-          : '첫 번째 점을 선택하세요 (기존 점만 선택 가능) - 녹색 원: 선택 가능';
+          ? '끝점을 선택하세요 (어디든 자유롭게 선택 가능) - 보라색: 점-점 연결, 주황색: 꼭짓점, 노란색: 중심점, 초록색: 기존 점 | ESC: 취소'
+          : '시작점을 선택하세요 (기존 점 + 도형의 꼭짓점/중심점 선택 가능) - 보라색: 점-점, 주황색: 꼭짓점, 노란색: 중심점, 초록색: 기존 점';
       default:
-        return '드래그해서 도형 그리기 | Shift + 드래그: 정형 도형 (정원, 정삼각형, 정사각형)';
+        return isDrawingShape
+          ? '드래그해서 도형 그리기 | Shift + 드래그: 정형 도형 | ESC: 취소'
+          : '드래그해서 도형 그리기 | Shift + 드래그: 정형 도형 (정원, 정삼각형, 정사각형)';
     }
   };
 

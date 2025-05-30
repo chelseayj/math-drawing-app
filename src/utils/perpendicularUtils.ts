@@ -24,8 +24,10 @@ export const findPerpendicularSnapToLines = (
   for (const line of lines) {
     const snapInfo = getPerpendicularSnapInfo(sourcePoint, line.startPoint, line.endPoint);
     
+    // 수선의 발이 선분에 충분히 가까워야 함 (3px 이내)
     if (snapInfo.distanceToSegment <= 3) {
-      if (snapInfo.distance >= 20 && snapInfo.distance <= 300 && snapInfo.distance < minDistance) {
+      // 수선 스냅 허용 거리를 대폭 줄임: 30~80px 범위로 제한
+      if (snapInfo.distance >= 30 && snapInfo.distance <= 80 && snapInfo.distance < minDistance) {
         bestSnap = {
           point: snapInfo.perpendicularPoint,
           targetType: 'line',
@@ -57,8 +59,10 @@ export const findPerpendicularSnapToShapeEdges = (
     for (const edge of edges) {
       const snapInfo = getPerpendicularSnapInfo(sourcePoint, edge.start, edge.end);
       
+      // 수선의 발이 도형 변에 충분히 가까워야 함 (3px 이내)
       if (snapInfo.distanceToSegment <= 3) {
-        if (snapInfo.distance >= 20 && snapInfo.distance <= 300 && snapInfo.distance < minDistance) {
+        // 수선 스냅 허용 거리를 대폭 줄임: 30~80px 범위로 제한
+        if (snapInfo.distance >= 30 && snapInfo.distance <= 80 && snapInfo.distance < minDistance) {
           bestSnap = {
             point: snapInfo.perpendicularPoint,
             targetType: 'edge',
